@@ -202,6 +202,9 @@ export default function ResultPage({
 
   useEffect(() => {
     const fetchData = async () => {
+      setLoading(true);
+      setError("");
+
       try {
         // Fetch wishlist
         const wishlistResponse = await fetch(
@@ -221,7 +224,8 @@ export default function ResultPage({
           throw new Error(wishlistData.error || "Failed to fetch wishlist");
         }
 
-        setWishlist(wishlistData.wishlist || []);
+        const fetchedWishlist = wishlistData.wishlist || [];
+        setWishlist(fetchedWishlist);
         setApiResponses((prev) => ({ ...prev, wishlist: wishlistData }));
 
         // Fetch profile and owned games
@@ -243,12 +247,13 @@ export default function ResultPage({
         }
 
         setProfile(profileData.profile);
-        setOwnedGames(profileData.ownedGames);
+        const fetchedOwnedGames = profileData.ownedGames || [];
+        setOwnedGames(fetchedOwnedGames);
         setApiResponses((prev) => ({ ...prev, profile: profileData }));
 
-        // Fetch game details for wishlist items
-        const wishlistWithDetails = await Promise.all(
-          wishlistData.wishlist.map(async (item: WishlistItem) => {
+        // Fetch details for wishlist items
+        const wishlistWithDetailsPromises = fetchedWishlist.map(
+          async (item: WishlistItem) => {
             try {
               const gameResponse = await fetch(
                 `/api/steam/game?appId=${item.appid}`
@@ -263,10 +268,17 @@ export default function ResultPage({
                 error: !gameResponse.ok ? gameData.error : undefined,
               });
 
+              if (!gameResponse.ok) {
+                console.warn(
+                  `Failed to fetch details for wishlist game ${item.appid}`
+                );
+                return item;
+              }
+
               return { ...item, gameDetails: gameData };
             } catch (error) {
               console.error(
-                `Failed to fetch details for game ${item.appid}:`,
+                `Error fetching details for wishlist game ${item.appid}:`,
                 error
               );
               addApiCall({
@@ -277,12 +289,12 @@ export default function ResultPage({
               });
               return item;
             }
-          })
+          }
         );
 
-        // Fetch game details for owned games
-        const ownedGamesWithDetails = await Promise.all(
-          profileData.ownedGames.map(async (game: OwnedGame) => {
+        // Fetch details for owned games
+        const ownedGamesWithDetailsPromises = fetchedOwnedGames.map(
+          async (game: OwnedGame) => {
             try {
               const gameResponse = await fetch(
                 `/api/steam/game?appId=${game.appid}`
@@ -297,10 +309,17 @@ export default function ResultPage({
                 error: !gameResponse.ok ? gameData.error : undefined,
               });
 
+              if (!gameResponse.ok) {
+                console.warn(
+                  `Failed to fetch details for owned game ${game.appid}`
+                );
+                return game;
+              }
+
               return { ...game, gameDetails: gameData };
             } catch (error) {
               console.error(
-                `Failed to fetch details for game ${game.appid}:`,
+                `Error fetching details for owned game ${game.appid}:`,
                 error
               );
               addApiCall({
@@ -311,13 +330,20 @@ export default function ResultPage({
               });
               return game;
             }
-          })
+          }
         );
 
-        setWishlist(wishlistWithDetails);
-        setOwnedGames(ownedGamesWithDetails);
-        setApiResponses((prev) => ({ ...prev, games: wishlistWithDetails }));
+        // Update state with details as they are fetched
+        const [resolvedWishlistWithDetails, resolvedOwnedGamesWithDetails] =
+          await Promise.all([
+            Promise.all(wishlistWithDetailsPromises),
+            Promise.all(ownedGamesWithDetailsPromises),
+          ]);
+
+        setWishlist(resolvedWishlistWithDetails);
+        setOwnedGames(resolvedOwnedGamesWithDetails);
       } catch (err) {
+        console.error("Error in fetchData effect:", err);
         setError(err instanceof Error ? err.message : "An error occurred");
       } finally {
         setLoading(false);
@@ -328,10 +354,11 @@ export default function ResultPage({
   }, [resolvedParams.steamId]);
 
   useEffect(() => {
-    // Extract unique categories and genres from wishlist
+    // Extract unique categories and genres from games with details (both wishlist and owned)
     const categories = new Set<string>();
     const genres = new Set<string>();
 
+    // Collect from wishlist
     wishlist.forEach((item) => {
       item.gameDetails?.categories?.forEach((cat: { description: string }) => {
         if (cat.description) {
@@ -345,9 +372,23 @@ export default function ResultPage({
       });
     });
 
+    // Collect from owned games (only if gameDetails are available)
+    ownedGames.forEach((game) => {
+      game.gameDetails?.categories?.forEach((cat: { description: string }) => {
+        if (cat.description) {
+          categories.add(cat.description);
+        }
+      });
+      game.gameDetails?.genres?.forEach((genre: { description: string }) => {
+        if (genre.description) {
+          genres.add(genre.description);
+        }
+      });
+    });
+
     setAvailableCategories(Array.from(categories).sort());
     setAvailableGenres(Array.from(genres).sort());
-  }, [wishlist]);
+  }, [wishlist, ownedGames]);
 
   useEffect(() => {
     // Calculate game statistics when owned games are loaded
@@ -364,6 +405,7 @@ export default function ResultPage({
       };
 
       ownedGames.forEach((game) => {
+        // Only process games that have successfully fetched details
         if (game.gameDetails) {
           // Count genres
           game.gameDetails.genres?.forEach((genre: { description: string }) => {
@@ -385,14 +427,18 @@ export default function ResultPage({
 
           // Count publishers
           game.gameDetails.publishers?.forEach((publisher: string) => {
-            stats.publishers[publisher] =
-              (stats.publishers[publisher] || 0) + 1;
+            if (publisher) {
+              stats.publishers[publisher] =
+                (stats.publishers[publisher] || 0) + 1;
+            }
           });
 
           // Count developers
           game.gameDetails.developers?.forEach((developer: string) => {
-            stats.developers[developer] =
-              (stats.developers[developer] || 0) + 1;
+            if (developer) {
+              stats.developers[developer] =
+                (stats.developers[developer] || 0) + 1;
+            }
           });
 
           // Add to total playtime
@@ -401,11 +447,12 @@ export default function ResultPage({
       });
 
       // Calculate average playtime
-      stats.averagePlaytime = stats.totalPlaytime / stats.totalGames;
+      stats.averagePlaytime =
+        stats.totalGames > 0 ? stats.totalPlaytime / stats.totalGames : 0;
 
       // Get top 5 games by playtime
       stats.topGames = ownedGames
-        .filter((game) => game.playtime_forever > 0)
+        .filter((game) => game.playtime_forever > 0 && game.gameDetails?.name)
         .sort((a, b) => (b.playtime_forever || 0) - (a.playtime_forever || 0))
         .slice(0, 5)
         .map((game) => ({
@@ -415,6 +462,9 @@ export default function ResultPage({
         }));
 
       setGameStats(stats);
+    } else {
+      // Reset stats if no owned games
+      setGameStats(null);
     }
   }, [ownedGames]);
 
@@ -482,7 +532,7 @@ export default function ResultPage({
         return false;
       }
 
-      // Search term filter
+      // Search term filter - search name, genres, categories
       const searchLower = filters.searchTerm.toLowerCase();
       const matchesSearch =
         !filters.searchTerm ||
@@ -497,11 +547,18 @@ export default function ResultPage({
       // Category filter
       const matchesCategories =
         filters.categories.length === 0 ||
-        filters.categories.every((cat) =>
-          item.gameDetails?.categories?.some(
-            (c: { description: string }) => c.description === cat
-          )
-        );
+        item.gameDetails?.categories?.some((c: { description: string }) =>
+          filters.categories.includes(c.description)
+        ) ||
+        false; // Ensure boolean return
+
+      // Genre filter
+      const matchesGenres =
+        filters.genres.length === 0 ||
+        item.gameDetails?.genres?.some((g: { description: string }) =>
+          filters.genres.includes(g.description)
+        ) ||
+        false; // Ensure boolean return
 
       // Platform filter - show games that have ALL selected platforms
       const selectedPlatforms = Object.entries(filters.platforms)
@@ -510,12 +567,13 @@ export default function ResultPage({
 
       const matchesPlatforms =
         selectedPlatforms.length === 0 ||
-        selectedPlatforms.every(
-          (platform) =>
-            item.gameDetails?.platforms?.[
-              platform as keyof typeof item.gameDetails.platforms
-            ]
-        );
+        (item.gameDetails?.platforms?.platforms &&
+          selectedPlatforms.every(
+            (platform) =>
+              item.gameDetails?.platforms?.platforms[
+                platform as keyof typeof item.gameDetails.platforms
+              ]
+          ));
 
       // Price range filter
       const price = item.gameDetails?.price_overview?.final || 0;
@@ -531,6 +589,7 @@ export default function ResultPage({
       return (
         matchesSearch &&
         matchesCategories &&
+        matchesGenres && // Include genre filter
         matchesPlatforms &&
         matchesPrice &&
         matchesDiscount
@@ -547,49 +606,57 @@ export default function ResultPage({
 
       let aValue, bValue;
 
+      // Add checks for gameDetails before accessing properties
+      const aDetails = a.gameDetails;
+      const bDetails = b.gameDetails;
+
       switch (sortOption.key) {
         case "price":
-          aValue = a.gameDetails?.price_overview?.final || 0;
-          bValue = b.gameDetails?.price_overview?.final || 0;
+          aValue = aDetails?.price_overview?.final || 0;
+          bValue = bDetails?.price_overview?.final || 0;
           break;
         case "date_added":
-          aValue = new Date(a.date_added).getTime();
-          bValue = new Date(b.date_added).getTime();
+          // date_added only exists on wishlist items, handle owned games
+          aValue = a.date_added ? new Date(a.date_added).getTime() : 0; // Treat owned games with no date as 0
+          bValue = b.date_added ? new Date(b.date_added).getTime() : 0;
           break;
         case "recommendations":
-          aValue = a.gameDetails?.recommendations?.total || 0;
-          bValue = b.gameDetails?.recommendations?.total || 0;
+          aValue = aDetails?.recommendations?.total || 0;
+          bValue = bDetails?.recommendations?.total || 0;
           break;
         case "name":
-          aValue = a.gameDetails?.name || a.name || "";
-          bValue = b.gameDetails?.name || b.name || "";
+          aValue = aDetails?.name || a.name || "";
+          bValue = bDetails?.name || b.name || "";
           break;
         case "priority":
+          // priority only exists on wishlist items
           aValue = a.priority || 0;
           bValue = b.priority || 0;
           break;
         default:
-          aValue = a[sortOption.key];
-          bValue = b[sortOption.key];
+          // Fallback for other keys, with gameDetails check
+          aValue = aDetails?.[sortOption.key] || a[sortOption.key];
+          bValue = bDetails?.[sortOption.key] || b[sortOption.key];
       }
 
-      if (aValue === undefined || bValue === undefined) return 0;
+      // Ensure values are comparable, especially for potentially undefined results
+      if (aValue == null || bValue == null) return 0; // Handle null/undefined gracefully
 
       if (sortOption.type === "string") {
         return filters.sortBy.direction === "asc"
-          ? aValue.localeCompare(bValue)
-          : bValue.localeCompare(aValue);
+          ? String(aValue).localeCompare(String(bValue))
+          : String(bValue).localeCompare(String(aValue));
       }
 
       return filters.sortBy.direction === "asc"
-        ? aValue - bValue
-        : bValue - aValue;
+        ? Number(aValue) - Number(bValue)
+        : Number(bValue) - Number(aValue);
     });
   };
 
-  // Helper function to get top items from stats
   const getTopItems = (items: { [key: string]: number }, count: number = 3) => {
     return Object.entries(items)
+      .filter(([, count]) => count > 0) // Only include items with count > 0
       .sort(([, a], [, b]) => b - a)
       .slice(0, count)
       .map(([name, count]) => ({ name, count }));
@@ -1072,7 +1139,7 @@ export default function ResultPage({
                 <div className="bg-white rounded-xl shadow-lg p-6">
                   <h3 className="text-xl font-bold mb-4">Top Publishers</h3>
                   <div className="space-y-3">
-                    {getTopItems(gameStats.publishers).map(
+                    {getTopItems(gameStats.publishers, 5).map(
                       (publisher, index) => (
                         <div
                           key={publisher.name}
@@ -1083,6 +1150,28 @@ export default function ResultPage({
                           </span>
                           <span className="text-gray-500">
                             {publisher.count} games
+                          </span>
+                        </div>
+                      )
+                    )}
+                  </div>
+                </div>
+
+                {/* Top Developers */}
+                <div className="bg-white rounded-xl shadow-lg p-6">
+                  <h3 className="text-xl font-bold mb-4">Top Developers</h3>
+                  <div className="space-y-3">
+                    {getTopItems(gameStats.developers, 5).map(
+                      (developer, index) => (
+                        <div
+                          key={developer.name}
+                          className="flex justify-between items-center"
+                        >
+                          <span className="text-gray-700">
+                            {index + 1}. {developer.name}
+                          </span>
+                          <span className="text-gray-500">
+                            {developer.count} games
                           </span>
                         </div>
                       )
@@ -1207,38 +1296,52 @@ export default function ResultPage({
                         </div>
 
                         <div className="space-y-2">
-                          {item.gameDetails?.genres && (
-                            <div className="text-sm">
-                              <span className="font-medium text-gray-700">
-                                Genres:
-                              </span>{" "}
-                              {item.gameDetails.genres.join(", ")}
-                            </div>
-                          )}
-                          {item.gameDetails?.categories && (
-                            <div className="text-sm">
-                              <span className="font-medium text-gray-700">
-                                Categories:
-                              </span>{" "}
-                              {item.gameDetails.categories.join(", ")}
-                            </div>
-                          )}
-                          {item.gameDetails?.developers && (
-                            <div className="text-sm">
-                              <span className="font-medium text-gray-700">
-                                Developers:
-                              </span>{" "}
-                              {item.gameDetails.developers.join(", ")}
-                            </div>
-                          )}
-                          {item.gameDetails?.publishers && (
-                            <div className="text-sm">
-                              <span className="font-medium text-gray-700">
-                                Publishers:
-                              </span>{" "}
-                              {item.gameDetails.publishers.join(", ")}
-                            </div>
-                          )}
+                          {item.gameDetails?.genres &&
+                            item.gameDetails.genres.length > 0 && (
+                              <div className="text-sm">
+                                <span className="font-medium text-gray-700">
+                                  Genres:
+                                </span>{" "}
+                                {item.gameDetails.genres
+                                  .map(
+                                    (genre: { description: string }) =>
+                                      genre.description
+                                  )
+                                  .join(", ")}
+                              </div>
+                            )}
+                          {item.gameDetails?.categories &&
+                            item.gameDetails.categories.length > 0 && (
+                              <div className="text-sm">
+                                <span className="font-medium text-gray-700">
+                                  Categories:
+                                </span>{" "}
+                                {item.gameDetails.categories
+                                  .map(
+                                    (category: { description: string }) =>
+                                      category.description
+                                  )
+                                  .join(", ")}
+                              </div>
+                            )}
+                          {item.gameDetails?.developers &&
+                            item.gameDetails.developers.length > 0 && (
+                              <div className="text-sm">
+                                <span className="font-medium text-gray-700">
+                                  Developers:
+                                </span>{" "}
+                                {item.gameDetails.developers.join(", ")}
+                              </div>
+                            )}
+                          {item.gameDetails?.publishers &&
+                            item.gameDetails.publishers.length > 0 && (
+                              <div className="text-sm">
+                                <span className="font-medium text-gray-700">
+                                  Publishers:
+                                </span>{" "}
+                                {item.gameDetails.publishers.join(", ")}
+                              </div>
+                            )}
                         </div>
 
                         <div className="flex justify-between items-center text-sm text-gray-500">
@@ -1282,7 +1385,7 @@ export default function ResultPage({
                       <div className="relative h-48 w-full">
                         <Image
                           src={game.gameDetails.header_image}
-                          alt={game.gameDetails.name}
+                          alt={game.gameDetails.name || game.name}
                           fill
                           className="object-cover"
                         />
@@ -1307,58 +1410,76 @@ export default function ResultPage({
                           </p>
                         )}
 
-                        <div className="flex flex-wrap gap-2">
-                          {game.gameDetails?.platforms?.windows && (
-                            <span className="px-2 py-1 bg-blue-100 text-blue-800 text-xs rounded-full">
-                              Windows
-                            </span>
-                          )}
-                          {game.gameDetails?.platforms?.mac && (
-                            <span className="px-2 py-1 bg-blue-100 text-blue-800 text-xs rounded-full">
-                              Mac
-                            </span>
-                          )}
-                          {game.gameDetails?.platforms?.linux && (
-                            <span className="px-2 py-1 bg-blue-100 text-blue-800 text-xs rounded-full">
-                              Linux
-                            </span>
-                          )}
-                        </div>
+                        {game.gameDetails?.platforms && (
+                          <div className="flex flex-wrap gap-2">
+                            {game.gameDetails?.platforms?.windows && (
+                              <span className="px-2 py-1 bg-blue-100 text-blue-800 text-xs rounded-full">
+                                Windows
+                              </span>
+                            )}
+                            {game.gameDetails?.platforms?.mac && (
+                              <span className="px-2 py-1 bg-blue-100 text-blue-800 text-xs rounded-full">
+                                Mac
+                              </span>
+                            )}
+                            {game.gameDetails?.platforms?.linux && (
+                              <span className="px-2 py-1 bg-blue-100 text-blue-800 text-xs rounded-full">
+                                Linux
+                              </span>
+                            )}
+                          </div>
+                        )}
 
-                        <div className="space-y-2">
-                          {game.gameDetails?.genres && (
-                            <div className="text-sm">
-                              <span className="font-medium text-gray-700">
-                                Genres:
-                              </span>{" "}
-                              {game.gameDetails.genres.join(", ")}
-                            </div>
-                          )}
-                          {game.gameDetails?.categories && (
-                            <div className="text-sm">
-                              <span className="font-medium text-gray-700">
-                                Categories:
-                              </span>{" "}
-                              {game.gameDetails.categories.join(", ")}
-                            </div>
-                          )}
-                          {game.gameDetails?.developers && (
-                            <div className="text-sm">
-                              <span className="font-medium text-gray-700">
-                                Developers:
-                              </span>{" "}
-                              {game.gameDetails.developers.join(", ")}
-                            </div>
-                          )}
-                          {game.gameDetails?.publishers && (
-                            <div className="text-sm">
-                              <span className="font-medium text-gray-700">
-                                Publishers:
-                              </span>{" "}
-                              {game.gameDetails.publishers.join(", ")}
-                            </div>
-                          )}
-                        </div>
+                        {game.gameDetails && (
+                          <div className="space-y-2">
+                            {game.gameDetails?.genres &&
+                              game.gameDetails.genres.length > 0 && (
+                                <div className="text-sm">
+                                  <span className="font-medium text-gray-700">
+                                    Genres:
+                                  </span>{" "}
+                                  {game.gameDetails.genres
+                                    .map(
+                                      (genre: { description: string }) =>
+                                        genre.description
+                                    )
+                                    .join(", ")}
+                                </div>
+                              )}
+                            {game.gameDetails?.categories &&
+                              game.gameDetails.categories.length > 0 && (
+                                <div className="text-sm">
+                                  <span className="font-medium text-gray-700">
+                                    Categories:
+                                  </span>{" "}
+                                  {game.gameDetails.categories
+                                    .map(
+                                      (category: { description: string }) =>
+                                        category.description
+                                    )
+                                    .join(", ")}
+                                </div>
+                              )}
+                            {game.gameDetails?.developers &&
+                              game.gameDetails.developers.length > 0 && (
+                                <div className="text-sm">
+                                  <span className="font-medium text-gray-700">
+                                    Developers:
+                                  </span>{" "}
+                                  {game.gameDetails.developers.join(", ")}
+                                </div>
+                              )}
+                            {game.gameDetails?.publishers &&
+                              game.gameDetails.publishers.length > 0 && (
+                                <div className="text-sm">
+                                  <span className="font-medium text-gray-700">
+                                    Publishers:
+                                  </span>{" "}
+                                  {game.gameDetails.publishers.join(", ")}
+                                </div>
+                              )}
+                          </div>
+                        )}
 
                         <div className="flex justify-between items-center text-sm text-gray-500">
                           {game.gameDetails?.recommendations?.total > 0 && (
@@ -1391,25 +1512,36 @@ export default function ResultPage({
                 <div className="bg-white rounded-lg shadow p-6">
                   <div className="flex justify-between items-center mb-4">
                     <h3 className="text-lg font-semibold">API Calls</h3>
-                    <label className="flex items-center space-x-2">
-                      <input
-                        type="checkbox"
-                        checked={hideErrors}
-                        onChange={(e) => setHideErrors(e.target.checked)}
-                        className="rounded text-blue-600 h-4 w-4"
-                      />
-                      <span className="text-sm text-gray-600">
-                        Hide error entries
-                      </span>
-                    </label>
+                    <div className="flex items-center gap-4">
+                      <div className="text-sm text-gray-600">
+                        Cache Status:{" "}
+                        {
+                          apiResponses.apiCalls.filter(
+                            (call) => call.status === "success"
+                          ).length
+                        }{" "}
+                        / {apiResponses.apiCalls.length} successful
+                      </div>
+                      <label className="flex items-center space-x-2">
+                        <input
+                          type="checkbox"
+                          checked={hideErrors}
+                          onChange={(e) => setHideErrors(e.target.checked)}
+                          className="rounded text-blue-600 h-4 w-4"
+                        />
+                        <span className="text-sm text-gray-600">
+                          Hide error entries
+                        </span>
+                      </label>
+                    </div>
                   </div>
                   <div className="space-y-4">
                     {apiResponses.apiCalls
                       .filter(
                         (call) => !hideErrors || call.status === "success"
                       )
-                      .map((call, index) => (
-                        <div key={index} className="border rounded-lg p-4">
+                      .map((call, callIndex) => (
+                        <div key={callIndex} className="border rounded-lg p-4">
                           <div className="flex justify-between items-start mb-2">
                             <div>
                               <span className="font-medium">

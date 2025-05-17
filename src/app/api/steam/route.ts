@@ -13,7 +13,8 @@ export async function GET(request: Request) {
 
   try {
     const response = await fetch(
-      `https://api.steampowered.com/IWishlistService/GetWishlist/v1/?steamid=${steamId}`
+      `https://api.steampowered.com/IWishlistService/GetWishlist/v1/?steamid=${steamId}`,
+      { cache: "force-cache", next: { revalidate: 300 } } // Cache for 5 minutes
     );
 
     if (!response.ok) {

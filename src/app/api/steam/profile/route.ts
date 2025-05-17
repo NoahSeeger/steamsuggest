@@ -14,14 +14,19 @@ export async function GET(request: Request) {
   try {
     // Fetch profile information
     const profileResponse = await fetch(
-      `https://api.steampowered.com/ISteamUser/GetPlayerSummaries/v2/?key=${process.env.STEAM_API_KEY}&steamids=${steamId}`
+      `https://api.steampowered.com/ISteamUser/GetPlayerSummaries/v2/?key=${process.env.STEAM_API_KEY}&steamids=${steamId}`,
+      { cache: "force-cache", next: { revalidate: 300 } } // Cache for 5 minutes
     );
     const profileData = await profileResponse.json();
 
-    if (!profileData.response?.players?.[0]) {
+    if (!profileResponse.ok || !profileData.response?.players?.[0]) {
+      console.error("Failed to fetch profile information:", {
+        status: profileResponse.status,
+        body: profileData,
+      });
       return NextResponse.json(
         { error: "Failed to fetch profile information" },
-        { status: 404 }
+        { status: profileResponse.status || 500 }
       );
     }
 
@@ -50,14 +55,19 @@ export async function GET(request: Request) {
 
     // Fetch owned games
     const gamesResponse = await fetch(
-      `https://api.steampowered.com/IPlayerService/GetOwnedGames/v1/?key=${process.env.STEAM_API_KEY}&steamid=${steamId}&include_appinfo=true&include_played_free_games=true`
+      `https://api.steampowered.com/IPlayerService/GetOwnedGames/v1/?key=${process.env.STEAM_API_KEY}&steamid=${steamId}&include_appinfo=true&include_played_free_games=true`,
+      { cache: "force-cache", next: { revalidate: 300 } } // Cache for 5 minutes
     );
     const gamesData = await gamesResponse.json();
 
-    if (!gamesData.response?.games) {
+    if (!gamesResponse.ok || !gamesData.response?.games) {
+      console.error("Failed to fetch owned games:", {
+        status: gamesResponse.status,
+        body: gamesData,
+      });
       return NextResponse.json(
         { error: "Failed to fetch owned games" },
-        { status: 404 }
+        { status: gamesResponse.status || 500 }
       );
     }
 
@@ -83,7 +93,10 @@ export async function GET(request: Request) {
   } catch (error) {
     console.error("Error fetching Steam data:", error);
     return NextResponse.json(
-      { error: "Failed to fetch Steam data" },
+      {
+        error: "Failed to fetch Steam data",
+        message: error instanceof Error ? error.message : "Unknown error",
+      },
       { status: 500 }
     );
   }
