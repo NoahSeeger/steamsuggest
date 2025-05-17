@@ -95,15 +95,27 @@ export default function Home() {
     setError("");
 
     try {
-      // Validate Steam ID format
+      let finalSteamId = steamId;
+
+      // Check if input is a Steam ID (17 digits)
       if (!/^\d{17}$/.test(steamId)) {
-        throw new Error(
-          "Invalid Steam ID format. Please enter a 17-digit number."
+        // If not a Steam ID, try to resolve it as a username
+        const resolveResponse = await fetch(
+          `/api/steam/resolve?username=${encodeURIComponent(steamId)}`
         );
+        const resolveData = await resolveResponse.json();
+
+        if (!resolveResponse.ok) {
+          throw new Error(
+            resolveData.error || "Could not resolve username to Steam ID"
+          );
+        }
+
+        finalSteamId = resolveData.steamId;
       }
 
-      // Navigate to results page
-      router.push(`/result/${steamId}`);
+      // Navigate to results page with the resolved Steam ID
+      router.push(`/result/${finalSteamId}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "An error occurred");
       setLoading(false);
@@ -163,7 +175,7 @@ export default function Home() {
               type="text"
               value={steamId}
               onChange={(e) => setSteamId(e.target.value)}
-              placeholder="Enter Steam ID (e.g., 76561198xxxxxxxxx)"
+              placeholder="Enter Steam ID or username (e.g., 76561198xxxxxxxxx or butchassup)"
               className="flex-1 p-3 border rounded-lg shadow-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
               required
             />

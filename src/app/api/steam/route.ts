@@ -18,10 +18,25 @@ export async function GET(request: Request) {
     );
 
     if (!response.ok) {
-      throw new Error("Failed to fetch wishlist");
+      throw new Error(`Steam API returned status ${response.status}`);
     }
 
     const data = await response.json();
+
+    // Check if the response has the expected structure
+    if (!data.response) {
+      console.error("Invalid Steam API response structure:", data);
+      return NextResponse.json(
+        { error: "Invalid response from Steam API" },
+        { status: 500 }
+      );
+    }
+
+    // Check if the user has a wishlist
+    if (!data.response.items || !Array.isArray(data.response.items)) {
+      // Return empty wishlist instead of error if user has no wishlist
+      return NextResponse.json({ wishlist: [] });
+    }
 
     // Transform the data into a more usable format
     const wishlist = data.response.items.map((item: any) => ({
@@ -34,7 +49,10 @@ export async function GET(request: Request) {
   } catch (error) {
     console.error("Steam API Error:", error);
     return NextResponse.json(
-      { error: "Failed to fetch wishlist" },
+      {
+        error: "Failed to fetch wishlist",
+        details: error instanceof Error ? error.message : "Unknown error",
+      },
       { status: 500 }
     );
   }
