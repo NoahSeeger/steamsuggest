@@ -35,6 +35,58 @@ async function fetchWithRetry(url: string, retries = 3, delayMs = 1000) {
   throw new Error("fetchWithRetry failed after multiple retries");
 }
 
+interface SteamApiCategory {
+  id: string;
+  description: string;
+}
+
+interface SteamApiGenre {
+  id: string;
+  description: string;
+}
+
+interface SteamApiResponseData {
+  name: string;
+  short_description: string;
+  header_image: string;
+  categories?: SteamApiCategory[];
+  genres?: SteamApiGenre[];
+  release_date: { coming_soon: boolean; date: string };
+  developers?: string[];
+  publishers?: string[];
+  price_overview?: {
+    currency: string;
+    initial: number;
+    final: number;
+    discount_percent: number;
+  };
+  platforms?: {
+    windows: boolean;
+    mac: boolean;
+    linux: boolean;
+  };
+  metacritic?: { score: number };
+  recommendations?: { total: number };
+  screenshots?: Array<{
+    id: number;
+    path_thumbnail: string;
+    path_full: string;
+  }>;
+  movies?: Array<{
+    id: number;
+    name: string;
+    thumbnail: string;
+    webm: { 480: string; max: string };
+  }>;
+}
+
+interface SteamApiResponse {
+  [appid: string]: {
+    success: boolean;
+    data?: SteamApiResponseData;
+  };
+}
+
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const appId = searchParams.get("appId");
@@ -44,7 +96,7 @@ export async function GET(request: Request) {
   }
 
   try {
-    const data = await fetchWithRetry(
+    const data: SteamApiResponse = await fetchWithRetry(
       `https://store.steampowered.com/api/appdetails?appids=${appId}`
     );
 
@@ -72,12 +124,12 @@ export async function GET(request: Request) {
       short_description: appData.short_description,
       header_image: appData.header_image,
       categories:
-        appData.categories?.map((cat: any) => ({
-          id: cat.id,
+        appData.categories?.map((cat: SteamApiCategory) => ({
+          id: parseInt(cat.id), // Categories ID is number in frontend interface
           description: cat.description,
         })) || [],
       genres:
-        appData.genres?.map((genre: any) => ({
+        appData.genres?.map((genre: SteamApiGenre) => ({
           id: genre.id,
           description: genre.description,
         })) || [],
@@ -97,14 +149,14 @@ export async function GET(request: Request) {
               appData.price_overview.initial / 100
             ).toFixed(2)}`, // Format price
           }
-        : null,
+        : undefined, // Use undefined instead of null for missing price_overview
       platforms: {
         windows: appData.platforms?.windows || false,
         mac: appData.platforms?.mac || false,
         linux: appData.platforms?.linux || false,
       },
-      metacritic: appData.metacritic || { score: 0 },
-      recommendations: appData.recommendations || { total: 0 },
+      metacritic: appData.metacritic || undefined, // Use undefined instead of { score: 0 } for missing metacritic
+      recommendations: appData.recommendations || undefined, // Use undefined instead of { total: 0 } for missing recommendations
       screenshots: appData.screenshots || [],
       movies: appData.movies || [],
     };

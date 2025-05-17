@@ -1,5 +1,17 @@
 import { NextResponse } from "next/server";
 
+interface SteamApiWishlistItem {
+  appid: number;
+  priority: number;
+  date_added: number; // Unix timestamp
+}
+
+interface SteamApiWishlistResponse {
+  response?: {
+    items?: SteamApiWishlistItem[];
+  };
+}
+
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const steamId = searchParams.get("steamId");
@@ -21,7 +33,7 @@ export async function GET(request: Request) {
       throw new Error(`Steam API returned status ${response.status}`);
     }
 
-    const data = await response.json();
+    const data: SteamApiWishlistResponse = await response.json();
 
     // Check if the response has the expected structure
     if (!data.response) {
@@ -39,7 +51,7 @@ export async function GET(request: Request) {
     }
 
     // Transform the data into a more usable format
-    const wishlist = data.response.items.map((item: any) => ({
+    const wishlist = data.response.items.map((item: SteamApiWishlistItem) => ({
       appid: item.appid,
       priority: item.priority,
       date_added: new Date(item.date_added * 1000).toLocaleDateString(),

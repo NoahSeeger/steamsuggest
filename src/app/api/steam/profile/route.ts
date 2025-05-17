@@ -1,5 +1,24 @@
 import { NextResponse } from "next/server";
 
+interface SteamApiOwnedGame {
+  appid: number;
+  name: string;
+  playtime_forever: number;
+  img_icon_url: string;
+  has_community_visible_stats: boolean;
+  playtime_windows_forever?: number;
+  playtime_mac_forever?: number;
+  playtime_linux_forever?: number;
+  rtime_last_played?: number; // Unix timestamp
+}
+
+interface SteamApiOwnedGamesResponse {
+  response?: {
+    game_count: number;
+    games?: SteamApiOwnedGame[];
+  };
+}
+
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const steamId = searchParams.get("steamId");
@@ -58,7 +77,7 @@ export async function GET(request: Request) {
       `https://api.steampowered.com/IPlayerService/GetOwnedGames/v1/?key=${process.env.STEAM_API_KEY}&steamid=${steamId}&include_appinfo=true&include_played_free_games=true`,
       { cache: "force-cache", next: { revalidate: 300 } } // Cache for 5 minutes
     );
-    const gamesData = await gamesResponse.json();
+    const gamesData: SteamApiOwnedGamesResponse = await gamesResponse.json();
 
     if (!gamesResponse.ok || !gamesData.response?.games) {
       console.error("Failed to fetch owned games:", {
@@ -71,23 +90,25 @@ export async function GET(request: Request) {
       );
     }
 
-    const ownedGames = gamesData.response.games.map((game: any) => ({
-      appid: game.appid,
-      name: game.name,
-      playtime_forever: Math.round(game.playtime_forever / 60), // Convert to hours
-      img_icon_url: game.img_icon_url,
-      has_community_visible_stats: game.has_community_visible_stats,
-      playtime_windows_forever: Math.round(
-        (game.playtime_windows_forever || 0) / 60
-      ),
-      playtime_mac_forever: Math.round((game.playtime_mac_forever || 0) / 60),
-      playtime_linux_forever: Math.round(
-        (game.playtime_linux_forever || 0) / 60
-      ),
-      rtime_last_played: game.rtime_last_played
-        ? new Date(game.rtime_last_played * 1000).toISOString()
-        : null,
-    }));
+    const ownedGames = gamesData.response.games.map(
+      (game: SteamApiOwnedGame) => ({
+        appid: game.appid,
+        name: game.name,
+        playtime_forever: Math.round(game.playtime_forever / 60), // Convert to hours
+        img_icon_url: game.img_icon_url,
+        has_community_visible_stats: game.has_community_visible_stats,
+        playtime_windows_forever: Math.round(
+          (game.playtime_windows_forever || 0) / 60
+        ),
+        playtime_mac_forever: Math.round((game.playtime_mac_forever || 0) / 60),
+        playtime_linux_forever: Math.round(
+          (game.playtime_linux_forever || 0) / 60
+        ),
+        rtime_last_played: game.rtime_last_played
+          ? new Date(game.rtime_last_played * 1000).toISOString()
+          : null,
+      })
+    );
 
     return NextResponse.json({ profile, ownedGames });
   } catch (error) {
