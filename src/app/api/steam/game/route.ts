@@ -5,12 +5,13 @@ const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 async function fetchWithRetry(url: string, retries = 3, delayMs = 1000) {
   for (let i = 0; i < retries; i++) {
     try {
-      // Use 'force-cache' for fetch to leverage Next.js Data Cache
-      // Add revalidate option to refresh cache after a certain period
+      // Use stale-while-revalidate strategy with a 1 hour cache
       const response = await fetch(url, {
-        cache: "force-cache",
-        next: { revalidate: 86400 },
-      }); // Cache for 24 hours
+        next: {
+          revalidate: 3600, // Cache for 1 hour
+          tags: [`game-${url.split("appids=")[1]}`], // Tag cache by appId
+        },
+      });
       const contentType = response.headers.get("content-type");
 
       if (!contentType?.includes("application/json")) {
